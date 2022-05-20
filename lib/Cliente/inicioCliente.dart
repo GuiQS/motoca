@@ -121,6 +121,7 @@ class MapSampleState extends State<MapSample> {
     FirebaseAuth.instance.authStateChanges().listen((User? user) {
       if (user != null) {
         user.reload();
+
         usuarioLogado = user;
         var userId = usuarioLogado.uid;
         verificarSeTemCorrida(userId).then((corrida) {
