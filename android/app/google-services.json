@@ -1,0 +1,62 @@
+{
+  "project_info": {
+    "project_number": "499629905592",
+    "project_id": "mototaxi-3a9ec",
+    "storage_bucket": "mototaxi-3a9ec.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:499629905592:android:9b652c5d03545a3f6f864d",
+        "android_client_info": {
+          "package_name": "com.gui.mototaxi"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "499629905592-5fliikiggqnhk7ddfa9np3q2ijfqr152.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.gui.mototaxi",
+            "certificate_hash": "14daed970f147e61cf536ac5b1eb673f0703f8b8"
+          }
+        },
+        {
+          "client_id": "499629905592-ku55eti3rk16gh9v59b9c28m34i7b2oa.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.gui.mototaxi",
+            "certificate_hash": "29581d04590fb170d45f77f8e900722c0352be61"
+          }
+        },
+        {
+          "client_id": "499629905592-h00fpldcbub547l8g4d9crtil7cn5he4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhKKkgVrl2sqAG-rB8s-QbA4lS06hwAu4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "499629905592-h00fpldcbub547l8g4d9crtil7cn5he4.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "499629905592-kudt2esj9nk124e9kqs533hn9j5inlnh.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "yy"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
