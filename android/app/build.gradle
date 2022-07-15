@@ -21,8 +21,8 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
-    flutterVersionCode = '3'
-        flutterVersionName = '3.0'
+    flutterVersionCode = '13'
+    flutterVersionName = '13.0'
 
 apply plugin: 'com.android.application'
 apply plugin: 'com.google.gms.google-services'

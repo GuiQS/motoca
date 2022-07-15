@@ -14,7 +14,15 @@
       },
       "oauth_client": [
         {
-          "client_id": "499629905592-5fliikiggqnhk7ddfa9np3q2ijfqr152.apps.googleusercontent.com",
+          "client_id": "499629905592-bkrfs8adpkf7iopmrji27u8nkugcqocu.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.gui.mototaxi",
+            "certificate_hash": "29581d04590fb170d45f77f8e900722c0352be61"
+          }
+        },
+        {
+          "client_id": "499629905592-hcvosqka1proejumravvcomqf7qmklho.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.gui.mototaxi",
@@ -22,11 +30,11 @@
           }
         },
         {
-          "client_id": "499629905592-ku55eti3rk16gh9v59b9c28m34i7b2oa.apps.googleusercontent.com",
+          "client_id": "499629905592-srlnrts6v50omud28ppm9e7eg8ashcli.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.gui.mototaxi",
-            "certificate_hash": "29581d04590fb170d45f77f8e900722c0352be61"
+            "certificate_hash": "c8cfcfd6fc13ced293c8b3f479a2ab221307596d"
           }
         },
         {
@@ -45,13 +53,6 @@
             {
               "client_id": "499629905592-h00fpldcbub547l8g4d9crtil7cn5he4.apps.googleusercontent.com",
               "client_type": 3
-            },
-            {
-              "client_id": "499629905592-kudt2esj9nk124e9kqs533hn9j5inlnh.apps.googleusercontent.com",
-              "client_type": 2,
-              "ios_info": {
-                "bundle_id": "yy"
-              }
             }
           ]
         }

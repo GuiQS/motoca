@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:fluttertoast/fluttertoast.dart';
-import 'package:geocoding/geocoding.dart';
+import "package:google_maps_webservice/geocoding.dart";
 
 exibirToastTop(String msg) {
   Fluttertoast.showToast(
@@ -20,7 +20,7 @@ Future<Position> pegarLocalizacao() async {
 
   serviceEnabled = await Geolocator.isLocationServiceEnabled();
   if (!serviceEnabled) {
-    return Future.error('Seu GPS ta desabilitado');
+    return Future.error('Seu GPS está desabilitado');
   }
 
   permission = await Geolocator.checkPermission();
@@ -38,9 +38,37 @@ Future<Position> pegarLocalizacao() async {
   return await Geolocator.getCurrentPosition();
 }
 
-Future<Placemark> latlongParaEndereco(double latitude, double longitude) async {
-  List<Placemark> placemarks =
-      await placemarkFromCoordinates(latitude, longitude);
-  Placemark place = placemarks[0];
-  return place;
+Future<RetornoLatLongEndereco> latlongParaEndereco(
+    double latitude, double longitude, String googleApiKey) async {
+  final geocoding = GoogleMapsGeocoding(apiKey: googleApiKey);
+  GeocodingResponse response =
+      await geocoding.searchByLocation(Location(lat: latitude, lng: longitude));
+
+  var cidade = response.results[0].addressComponents
+      .where((componentsEndereco) =>
+          componentsEndereco.types.first == "administrative_area_level_2" ||
+          componentsEndereco.types.last == "administrative_area_level_2")
+      .first
+      .longName;
+  if (cidade == "") {
+    exibirToastTop("Não conseguimos identificar sua cidade");
+    return Future.error("Não conseguimos identificar sua cidade");
+  }
+
+  return RetornoLatLongEndereco(
+      cidade, response.results.first.formattedAddress.toString());
+}
+
+double calcularDistanciaEntreCoordenadas(
+    startLatitude, startLongitude, endLatitude, endLongitude) {
+  final double distance = Geolocator.distanceBetween(
+      startLatitude, startLongitude, endLatitude, endLongitude);
+  return distance / 1000;
+}
+
+class RetornoLatLongEndereco {
+  String cidade = "";
+  String enderecoFormatado = "";
+
+  RetornoLatLongEndereco(this.cidade, this.enderecoFormatado);
 }

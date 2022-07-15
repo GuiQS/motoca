@@ -1,3 +1,6 @@
+import 'package:Motoca/Cliente/NavDrawer.dart';
+import 'package:Motoca/Cliente/Singletons/Singletons_nav.dart';
+import 'package:Motoca/Cliente/Singletons/corrida_singleton.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:Motoca/Cliente/controller/corrida_controller.dart';
@@ -22,24 +25,12 @@ class InicioClient extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: const NavDrawer(),
       appBar: AppBar(
         title: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text("Motoca"),
-            TextButton(
-              onPressed: () {
-                FirebaseAuth.instance.signOut();
-                Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (context) => const MyApp()),
-                    (Route<dynamic> route) => false);
-              },
-              child: const Icon(
-                Icons.logout,
-                color: Colors.white,
-                size: 20.0,
-              ),
-            )
+          children: const [
+            Text("Motoca"),
           ],
         ),
       ),
@@ -52,10 +43,10 @@ class MapSample extends StatefulWidget {
   const MapSample({Key? key}) : super(key: key);
 
   @override
-  State<MapSample> createState() => MapSampleState();
+  State<MapSample> createState() => InicioClientState();
 }
 
-class MapSampleState extends State<MapSample> {
+class InicioClientState extends State<MapSample> {
   FirebaseFirestore firestore = FirebaseFirestore.instance;
   final Completer<GoogleMapController> _controller = Completer();
 
@@ -64,8 +55,11 @@ class MapSampleState extends State<MapSample> {
     zoom: 14.4746,
   );
 
+  LatLng posicaoCameraAtual = const LatLng(0, 0);
+
   Map<MarkerId, Marker> markers = <MarkerId, Marker>{};
   String googleApiKey = "AIzaSyAhKKkgVrl2sqAG-rB8s-QbA4lS06hwAu4";
+  String tempoMinimoEmMinutosParaCancelarCorrida = "0";
 
   late PolylinePoints polylinePoints;
   List<LatLng> polylineCoordinates = [];
@@ -73,13 +67,22 @@ class MapSampleState extends State<MapSample> {
 
   bool rotaFeita = false;
   bool procurandoMotorista = false;
-  bool corridaAtiva = false;
+  bool corridaAndamento = false;
+  bool corridaAceita = false;
   bool disponivelNaCidade = true;
-  String motocasDisponivel = "";
+  bool pegandoEnderecoDestino = false;
+  String statusCidade = "";
+
+  dynamic corridaAtual;
+  String tempoEmMinutosAteOMotocaChegar = "";
+
+  bool usuarioQuerDigitarMotivoCancelamento = false;
 
   late User usuarioLogado;
 
   final TextEditingController _controllerEnderecoOrigem =
+      TextEditingController();
+  final TextEditingController _controllerEnderecoDestino =
       TextEditingController();
   final TextEditingController controllerTelefoneUsuario =
       TextEditingController();
@@ -102,6 +105,7 @@ class MapSampleState extends State<MapSample> {
   @override
   void initState() {
     super.initState();
+    SingletonNav.instance.setContext(context);
     WidgetsBinding.instance?.addPostFrameCallback((_) async {
       await pegarKeys();
       buscarUsuario(context);
@@ -113,6 +117,10 @@ class MapSampleState extends State<MapSample> {
     var docs = await keys.get();
     if (docs.size > 0) {
       googleApiKey = docs.docs.first["googleApiKey"];
+      tempoMinimoEmMinutosParaCancelarCorrida =
+          docs.docs.first["tempoMinimoMinutosParaCancelar"];
+      SingletonCorrida.instance.setTempoMinimoMinutoParaCancelarCorrida(
+          tempoMinimoEmMinutosParaCancelarCorrida);
       return;
     }
   }
@@ -121,9 +129,9 @@ class MapSampleState extends State<MapSample> {
     FirebaseAuth.instance.authStateChanges().listen((User? user) {
       if (user != null) {
         user.reload();
-
         usuarioLogado = user;
         var userId = usuarioLogado.uid;
+        SingletonCorrida.instance.setUsuarioId(userId);
         verificarSeTemCorrida(userId).then((corrida) {
           corridaEmAndamento(corrida);
         }).onError((error, stackTrace) {
@@ -154,7 +162,7 @@ class MapSampleState extends State<MapSample> {
         style: const TextStyle(color: Colors.black),
         controller: controllerTelefoneUsuario,
         decoration: const InputDecoration(
-          labelText: 'Digite logo a seguir:',
+          labelText: 'Digite a seguir:',
           hintText: '00 000000000',
           labelStyle: TextStyle(fontSize: 20.0, color: Colors.black),
           fillColor: Colors.black,
@@ -190,11 +198,15 @@ class MapSampleState extends State<MapSample> {
       endereco = Endereco.fromJson(corrida['endereco']);
       precoCorrida = corrida["preco"].toString();
       kmCorrida = corrida["km"].toString();
+      corridaAtual = corrida;
       corridaId = corrida.id;
+      SingletonCorrida.instance.setCorridaId(corridaId);
       adicionarMarker(endereco.latLongEnderecoOrigem.latitude,
           endereco.latLongEnderecoOrigem.longitude, "Sua localização");
       adicionarMarker(endereco.latLongEnderecoDestino.latitude,
           endereco.latLongEnderecoDestino.longitude, "Destino");
+      _controllerEnderecoOrigem.text = endereco.enderecoOrigem;
+      _controllerEnderecoDestino.text = endereco.enderecoDestino;
       calcularRota(
           endereco.latLongEnderecoOrigem.latitude,
           endereco.latLongEnderecoOrigem.longitude,
@@ -204,9 +216,13 @@ class MapSampleState extends State<MapSample> {
           endereco.latLongEnderecoOrigem.longitude);
       if (corrida["status"] == "procurando") {
         procurandoMotorista = true;
-      } else {
-        corridaAtiva = true;
+      } else if (corrida["status"] == "andamento") {
+        corridaAndamento = true;
+      } else if (corrida["status"] == "aceito") {
+        corridaAceita = true;
+        buscarTempoQueMotocaChegaEmMinutos();
       }
+      SingletonCorrida.instance.setCorridaAtiva(true);
       adicionarListenerProcurandoMotorista();
     });
   }
@@ -214,39 +230,65 @@ class MapSampleState extends State<MapSample> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(60),
-        child: !procurandoMotorista && !corridaAtiva
-            ? AppBar(
-                title: Column(
-                  children: [
-                    TextField(
-                      controller: _controllerEnderecoOrigem,
-                      onTap: pegarEnderecoOrigem,
-                      readOnly: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Digite o seu endereço (origem)',
-                      ),
-                    ),
-                  ],
+      body: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 10, left: 10, right: 10),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Origem:"),
+                TextField(
+                  controller: _controllerEnderecoOrigem,
+                  onTap: () {
+                    verificarComoUsuarioQuerEscolherLocalizacao("origem");
+                  },
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    hintText: 'Digite o seu endereço (origem)',
+                  ),
                 ),
-              )
-            : const SizedBox(),
-      ),
-      body: GoogleMap(
-        mapType: MapType.normal,
-        initialCameraPosition: _kGooglePlex,
-        onMapCreated: (GoogleMapController controller) {
-          _controller.complete(controller);
-        },
-        markers: Set<Marker>.of(markers.values),
-        polylines: Set<Polyline>.of(polylines.values),
+                const SizedBox(
+                  height: 10,
+                ),
+                const Text("Destino:"),
+                TextField(
+                  controller: _controllerEnderecoDestino,
+                  onTap: () {
+                    verificarComoUsuarioQuerEscolherLocalizacao("destino");
+                  },
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    hintText: 'Digite o seu endereço (destino)',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            margin: const EdgeInsets.only(top: 160),
+            child: GoogleMap(
+              mapType: MapType.normal,
+              initialCameraPosition: _kGooglePlex,
+              onMapCreated: (GoogleMapController controller) {
+                _controller.complete(controller);
+              },
+              markers: Set<Marker>.of(markers.values),
+              onCameraMove: ((_position) => updateCameraPosition(_position)),
+              onCameraIdle: () => {updateMarkerCamera()},
+              polylines: Set<Polyline>.of(polylines.values),
+            ),
+          ),
+        ],
       ),
       persistentFooterButtons: [
-        corridaAtiva
+        corridaAceita
             ? Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(10),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const SizedBox(
                       width: 40,
@@ -268,15 +310,243 @@ class MapSampleState extends State<MapSample> {
                     const SizedBox(
                       height: 30,
                     ),
-                    FloatingActionButton.extended(
-                      onPressed: mostrarInfoMotoca,
-                      label: const Text('Clique aqui para ver detalhes'),
+                    corridaAtual != null
+                        ? Row(
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Preço: R\$" + corridaAtual["preco"],
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                  tempoEmMinutosAteOMotocaChegar != "0"
+                                      ? Text(
+                                          "Motoca vai chegar em: " +
+                                              tempoEmMinutosAteOMotocaChegar +
+                                              " minutos",
+                                          style: const TextStyle(fontSize: 18),
+                                        )
+                                      : const SizedBox(),
+                                  const Divider(
+                                    color: Colors.white,
+                                  ),
+                                  Text(
+                                    "Nome: " +
+                                        (corridaAtual["motoca"]["nomeCompleto"])
+                                            .toString(),
+                                    style: const TextStyle(fontSize: 15),
+                                  ),
+                                  Text(
+                                    "Moto: " +
+                                        (corridaAtual["motoca"]["motos"]
+                                                    .where((m) =>
+                                                        m["status"] == "ativa")
+                                                    .first["marca"] +
+                                                " " +
+                                                corridaAtual["motoca"]["motos"]
+                                                    .where((m) =>
+                                                        m["status"] == "ativa")
+                                                    .first["ano"] +
+                                                " - " +
+                                                corridaAtual["motoca"]["motos"]
+                                                    .where((m) =>
+                                                        m["status"] == "ativa")
+                                                    .first["cor"])
+                                            .toString(),
+                                    style: const TextStyle(fontSize: 15),
+                                  ),
+                                  Text(
+                                    "Placa: " +
+                                        (corridaAtual["motoca"]["motos"]
+                                                .where((m) =>
+                                                    m["status"] == "ativa")
+                                                .first["placa"])
+                                            .toString(),
+                                    style: const TextStyle(fontSize: 15),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          )
+                        : const SizedBox(),
+                    const SizedBox(
+                      height: 20,
                     ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Expanded(
+                            child: validarBotaoCancelarCorrida()
+                                ? FloatingActionButton.extended(
+                                    onPressed: () async {
+                                      setState(() {
+                                        usuarioQuerDigitarMotivoCancelamento =
+                                            false;
+                                      });
+                                      exibirAlertaCancelarCorrida(context);
+                                    },
+                                    backgroundColor: Colors.red,
+                                    label: const Text(
+                                      'Cancelar corrida',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        // fontSize: 10,
+                                      ),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.cancel,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : FloatingActionButton.extended(
+                                    onPressed: () async {},
+                                    backgroundColor: Colors.grey,
+                                    label: const Text(
+                                      'Cancelar corrida',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        // fontSize: 10,
+                                      ),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.cancel,
+                                      color: Colors.white,
+                                    ),
+                                  )),
+                      ],
+                    )
                   ],
                 ),
               )
-            : const SizedBox(),
-        !corridaAtiva && procurandoMotorista
+            : corridaAndamento
+                ? Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        const SizedBox(
+                          width: 40,
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            CircularProgressIndicator(
+                              color: Colors.white,
+                            ),
+                            SizedBox(
+                              width: 10,
+                            ),
+                            Text(
+                              'Corrida em andamento',
+                              style: TextStyle(fontSize: 20),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(
+                          height: 30,
+                        ),
+                        corridaAtual != null
+                            ? Row(
+                                children: [
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Preço: R\$" + corridaAtual["preco"],
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 18,
+                                        ),
+                                      ),
+                                      const Divider(
+                                        height: 5,
+                                        color: Colors.white,
+                                      ),
+                                      Text(
+                                        "Nome: " +
+                                            (corridaAtual["motoca"]
+                                                    ["nomeCompleto"])
+                                                .toString(),
+                                        style: const TextStyle(fontSize: 15),
+                                      ),
+                                      Text(
+                                        "Moto: " +
+                                            (corridaAtual["motoca"]["motos"]
+                                                        .where((m) =>
+                                                            m["status"] ==
+                                                            "ativa")
+                                                        .first["marca"] +
+                                                    " " +
+                                                    corridaAtual["motoca"]
+                                                            ["motos"]
+                                                        .where((m) =>
+                                                            m["status"] ==
+                                                            "ativa")
+                                                        .first["ano"] +
+                                                    " - " +
+                                                    corridaAtual["motoca"]
+                                                            ["motos"]
+                                                        .where((m) =>
+                                                            m["status"] ==
+                                                            "ativa")
+                                                        .first["cor"])
+                                                .toString(),
+                                        style: const TextStyle(fontSize: 15),
+                                      ),
+                                      Text(
+                                        "Placa: " +
+                                            (corridaAtual["motoca"]["motos"]
+                                                    .where((m) =>
+                                                        m["status"] == "ativa")
+                                                    .first["placa"])
+                                                .toString(),
+                                        style: const TextStyle(fontSize: 15),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              )
+                            : const SizedBox(),
+                        // const SizedBox(
+                        //   height: 20,
+                        // ),
+                        // Row(
+                        //   mainAxisAlignment: MainAxisAlignment.center,
+                        //   children: [
+                        //     Expanded(
+                        //       child: FloatingActionButton.extended(
+                        //         onPressed: () async {
+                        //           setState(() {
+                        //             usuarioQuerDigitarMotivoCancelamento =
+                        //                 false;
+                        //           });
+                        //           exibirAlertaCancelarCorrida(context);
+                        //         },
+                        //         backgroundColor: Colors.red,
+                        //         label: const Text(
+                        //           'Cancelar corrida',
+                        //           style: TextStyle(
+                        //             color: Colors.white,
+                        //             // fontSize: 10,
+                        //           ),
+                        //         ),
+                        //         icon: const Icon(
+                        //           Icons.cancel,
+                        //           color: Colors.white,
+                        //         ),
+                        //       ),
+                        //     ),
+                        //   ],
+                        // )
+                      ],
+                    ),
+                  )
+                : const SizedBox(),
+        !corridaAceita && !corridaAndamento && procurandoMotorista
             ? Column(
                 children: [
                   const SizedBox(
@@ -321,7 +591,15 @@ class MapSampleState extends State<MapSample> {
                       Expanded(
                         child: FloatingActionButton.extended(
                           onPressed: () async {
-                            exibirAlertaCancelarCorrida(context);
+                            try {
+                              await cancelarCorrida(
+                                  "Cancelado procurando motorista");
+
+                              exibirToastTop("Corrida cancelada com sucesso");
+                              cancelarCorridaApp();
+                            } catch (e) {
+                              exibirToastTop(e.toString());
+                            }
                           },
                           backgroundColor: Colors.red,
                           label: const Text(
@@ -346,9 +624,11 @@ class MapSampleState extends State<MapSample> {
               )
             : const SizedBox(),
       ],
-      floatingActionButton: (!procurandoMotorista && !corridaAtiva) &&
+      floatingActionButton: (!procurandoMotorista &&
+                  !corridaAceita &&
+                  !corridaAndamento) &&
               disponivelNaCidade &&
-              motocasDisponivel == "aberta"
+              statusCidade == "aberta"
           ? Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -359,7 +639,11 @@ class MapSampleState extends State<MapSample> {
                     : const SizedBox(),
                 !rotaFeita
                     ? FloatingActionButton.extended(
-                        onPressed: pegarEnderecoDestino,
+                        backgroundColor: Colors.greenAccent,
+                        onPressed: () {
+                          verificarComoUsuarioQuerEscolherLocalizacao(
+                              "destino");
+                        },
                         label: const Text('Solicitar Corrida'),
                         icon: const Icon(Icons.motorcycle),
                       )
@@ -407,30 +691,31 @@ class MapSampleState extends State<MapSample> {
                                   " Km");
                         },
                         label: const Text('Continuar'),
+                        backgroundColor: Colors.greenAccent,
                         icon: const Icon(Icons.next_plan),
                       )
                     : const SizedBox(),
               ],
             )
-          : motocasDisponivel == "fechado"
+          : statusCidade == "fechado"
               ? Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     FloatingActionButton.extended(
+                      backgroundColor: Colors.greenAccent,
                       onPressed: () => {
-                        exibirToastTop(
-                            'Não tem motocas disponíveis \nnesse momento :('),
+                        exibirToastTop('App indisponível em sua cidade :('),
                       },
-                      label: const Text(
-                          'Não tem motocas disponíveis \nnesse momento :('),
+                      label: const Text('App indisponível em sua cidade :('),
                     )
                   ],
                 )
-              : !corridaAtiva && !procurandoMotorista
+              : !corridaAceita && !procurandoMotorista && !corridaAndamento
                   ? Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         FloatingActionButton.extended(
+                          backgroundColor: Colors.greenAccent,
                           onPressed: () => {
                             exibirToastTop('App indisponível em sua cidade :('),
                           },
@@ -443,67 +728,206 @@ class MapSampleState extends State<MapSample> {
     );
   }
 
-  void pegarEnderecoDestino() async {
-    verificarSeTemUsuario(usuarioLogado.uid).then((user) async {
-      if (endereco.latLongEnderecoOrigem.latitude == 0 &&
-          endereco.latLongEnderecoOrigem.longitude == 0) {
-        await atualizarLocalUsuario();
-      }
-      Prediction? p = await PlacesAutocomplete.show(
+  verificarComoUsuarioQuerEscolherLocalizacao(tipoLocalizacao) async {
+    if (!corridaAceita && !corridaAndamento && !procurandoMotorista) {
+      await Alert(
         context: context,
-        apiKey: googleApiKey,
-        mode: Mode.overlay, // Mode.fullscreen
-        language: "pt",
-        region: "pt-br",
-        decoration: const InputDecoration(
-          hintText: 'Digite o endereço de destino',
-        ),
-        components: [
-          Component(Component.country, "br"),
+        title: "Como deseja preencher o local?",
+        style: const AlertStyle(backgroundColor: Colors.white),
+        buttons: [
+          DialogButton(
+            color: Colors.greenAccent,
+            child: const Text(
+              "Pelo Mapa",
+              style: TextStyle(
+                color: Colors.black,
+              ),
+            ),
+            onPressed: () {
+              Navigator.of(context).pop();
+              if (tipoLocalizacao == "origem") {
+                pegandoEnderecoDestino = false;
+                if (endereco.latLongEnderecoOrigem.latitude != 0 &&
+                    endereco.latLongEnderecoOrigem.longitude != 0) {
+                  atualizarCameraMapa(endereco.latLongEnderecoOrigem.latitude,
+                      endereco.latLongEnderecoOrigem.longitude);
+                }
+              } else if (tipoLocalizacao == "destino") {
+                pegandoEnderecoDestino = true;
+                if (endereco.latLongEnderecoDestino.latitude != 0 &&
+                    endereco.latLongEnderecoDestino.longitude != 0) {
+                  atualizarCameraMapa(endereco.latLongEnderecoDestino.latitude,
+                      endereco.latLongEnderecoDestino.longitude);
+                }
+              }
+            },
+          ),
+          DialogButton(
+            color: Colors.greenAccent,
+            child: const Text(
+              "Digitando",
+              style: TextStyle(
+                color: Colors.black,
+              ),
+            ),
+            onPressed: () {
+              Navigator.of(context).pop();
+              if (tipoLocalizacao == "origem") {
+                pegarEnderecoOrigem();
+              } else if (tipoLocalizacao == "destino") {
+                pegarEnderecoDestino();
+              }
+            },
+          ),
         ],
-        offset: 0,
-        radius: 1000,
-        strictbounds: false,
-        types: [],
-        sessionToken: "",
-      );
-      pegarLatLongDoEnderecoDestino(p);
-    }).onError((error, stackTrace) {
-      pegarNumeroTelefoneUsuario();
-    });
+      ).show();
+    }
   }
 
-  void pegarEnderecoOrigem() async {
-    Prediction? p = await PlacesAutocomplete.show(
-      context: context,
-      apiKey: googleApiKey,
-      mode: Mode.overlay, // Mode.fullscreen
-      language: "pt",
-      region: "pt-br",
-      decoration: const InputDecoration(
-        hintText: 'Digite o endereço de origem',
-      ),
-      components: [
-        Component(Component.country, "br"),
-      ],
-      offset: 0,
-      radius: 1000,
-      strictbounds: false,
-      types: [],
-      sessionToken: "",
-    );
-    if (p != null) {
-      try {
-        var endereco = await configurarEnderecoOrigem(p);
-        _controllerEnderecoOrigem.text = endereco;
-        cancelarCorridaApp();
-      } catch (e) {
-        exibirToastTop(e.toString());
+  updateCameraPosition(CameraPosition _position) async {
+    if (!procurandoMotorista && !corridaAceita && !corridaAndamento) {
+      posicaoCameraAtual =
+          LatLng(_position.target.latitude, _position.target.longitude);
+
+      MarkerId markerId =
+          MarkerId(!pegandoEnderecoDestino ? "Sua localização" : "Destino");
+      if (markers.length == 2) {
+        Marker? marker = markers[markerId];
+        if (marker != null) {
+          Marker updatedMarker = marker.copyWith(
+            positionParam: _position.target,
+          );
+
+          setState(() {
+            markers[markerId] = updatedMarker;
+          });
+        }
+      } else {
+        adicionarMarker(_position.target.latitude, _position.target.longitude,
+            !pegandoEnderecoDestino ? "Sua localização" : "Destino");
       }
     }
   }
 
-  Future<Null> pegarLatLongDoEnderecoDestino(Prediction? p) async {
+  updateMarkerCamera() async {
+    if (!procurandoMotorista && !corridaAceita && !corridaAndamento) {
+      try {
+        if (posicaoCameraAtual.latitude != 0 &&
+            posicaoCameraAtual.longitude != 0) {
+          if (!pegandoEnderecoDestino) {
+            await setarEnderecoOrigem(
+                posicaoCameraAtual.latitude, posicaoCameraAtual.longitude);
+          } else {
+            await setarEnderecoDestino(
+                posicaoCameraAtual.latitude, posicaoCameraAtual.longitude);
+          }
+          await updateCameraPosition(CameraPosition(
+              target: LatLng(
+                  posicaoCameraAtual.latitude, posicaoCameraAtual.longitude)));
+        }
+      } catch (e) {
+        return Future.error("Erro ao pegar endereço");
+      }
+    }
+  }
+
+  void pegarEnderecoDestino() async {
+    if (!procurandoMotorista && !corridaAceita && !corridaAndamento) {
+      verificarSeTemUsuario(usuarioLogado.uid).then((user) async {
+        if (endereco.latLongEnderecoOrigem.latitude == 0 &&
+            endereco.latLongEnderecoOrigem.longitude == 0) {
+          await atualizarLocalUsuario();
+        }
+        setState(() {
+          pegandoEnderecoDestino = true;
+        });
+        Prediction? p = await PlacesAutocomplete.show(
+          context: context,
+          apiKey: googleApiKey,
+          mode: Mode.overlay, // Mode.fullscreen
+          language: "pt",
+          region: "pt-br",
+          decoration: const InputDecoration(
+            hintText: 'Digite o endereço de destino',
+          ),
+          components: [
+            Component(Component.country, "br"),
+          ],
+          startText: _controllerEnderecoDestino.text.toString().toLowerCase(),
+          offset: 0,
+          radius: 1000,
+          strictbounds: false,
+          location: Location(
+              lat: endereco.latLongEnderecoOrigem.latitude,
+              lng: endereco.latLongEnderecoOrigem.longitude),
+          types: [],
+          sessionToken: "",
+        );
+        pegarLatLongDoEnderecoDestino(p);
+      }).onError((error, stackTrace) {
+        pegarNumeroTelefoneUsuario();
+      });
+    }
+  }
+
+  void pegarEnderecoOrigem() async {
+    if (!procurandoMotorista && !corridaAceita && !corridaAndamento) {
+      Prediction? p;
+      try {
+        var position = await pegarLocalizacao();
+        p = await PlacesAutocomplete.show(
+          context: context,
+          apiKey: googleApiKey,
+          mode: Mode.overlay, // Mode.fullscreen
+          language: "pt",
+          region: "pt-br",
+          decoration: const InputDecoration(
+            hintText: 'Digite o endereço de origem',
+          ),
+          components: [
+            Component(Component.country, "br"),
+          ],
+          offset: 0,
+          radius: 1000,
+          strictbounds: false,
+          startText: _controllerEnderecoOrigem.text.toString().toLowerCase(),
+          location: Location(lat: position.latitude, lng: position.longitude),
+          types: [],
+          sessionToken: "",
+        );
+      } catch (e) {
+        p = await PlacesAutocomplete.show(
+          context: context,
+          apiKey: googleApiKey,
+          mode: Mode.overlay, // Mode.fullscreen
+          language: "pt",
+          region: "pt-br",
+          decoration: const InputDecoration(
+            hintText: 'Digite o endereço de origem',
+          ),
+          components: [
+            Component(Component.country, "br"),
+          ],
+          offset: 0,
+          radius: 1000,
+          strictbounds: false,
+          startText: _controllerEnderecoOrigem.text.toString(),
+          types: [],
+          sessionToken: "",
+        );
+      }
+
+      if (p != null) {
+        try {
+          await configurarEnderecoOrigem(p);
+        } catch (e) {
+          exibirToastTop(e.toString());
+        }
+      }
+    }
+  }
+
+  Future pegarLatLongDoEnderecoDestino(Prediction? p) async {
     if (p != null) {
       GoogleMapsPlaces _places = GoogleMapsPlaces(
         apiKey: googleApiKey,
@@ -513,25 +937,14 @@ class MapSampleState extends State<MapSample> {
       PlacesDetailsResponse detail = await _places.getDetailsByPlaceId(placeId);
       final lat = detail.result.geometry?.location.lat;
       final lng = detail.result.geometry?.location.lng;
-      adicionarMarker(double.parse(lat.toString()),
-          double.parse(lng.toString()), "Destino");
-      List<LatLng> latlng = [];
-      markers.forEach((key, value) {
-        latlng.add(LatLng(value.position.latitude, value.position.longitude));
-      });
-
-      await atualizarCameraMapa(latlng.last.latitude, latlng.last.longitude);
-      endereco.latLongEnderecoDestino =
-          LatLng(latlng.last.latitude, latlng.last.longitude);
-      endereco.enderecoDestino = detail.result.vicinity.toString();
-      polylines = <PolylineId, Polyline>{};
-      await calcularRota(latlng.first.latitude, latlng.first.longitude,
-          latlng.last.latitude, latlng.last.longitude);
+      await atualizarCameraMapa(
+          double.parse(lat.toString()), double.parse(lng.toString()));
     }
   }
 
-  Future<String> configurarEnderecoOrigem(Prediction? p) async {
+  Future configurarEnderecoOrigem(Prediction? p) async {
     if (p != null) {
+      pegandoEnderecoDestino = false;
       GoogleMapsPlaces _places = GoogleMapsPlaces(
         apiKey: googleApiKey,
         apiHeaders: await const GoogleApiHeaders().getHeaders(),
@@ -540,30 +953,8 @@ class MapSampleState extends State<MapSample> {
       PlacesDetailsResponse detail = await _places.getDetailsByPlaceId(placeId);
       final lat = detail.result.geometry?.location.lat;
       final long = detail.result.geometry?.location.lng;
-      adicionarMarker(double.parse(lat.toString()),
-          double.parse(long.toString()), "Sua localização");
-      atualizarCameraMapa(
+      await atualizarCameraMapa(
           double.parse(lat.toString()), double.parse(long.toString()));
-      String cidade = "";
-      try {
-        cidade = detail.result.addressComponents
-            .where((componentsEndereco) =>
-                componentsEndereco.types.first ==
-                    "administrative_area_level_2" ||
-                componentsEndereco.types.last == "administrative_area_level_2")
-            .first
-            .longName;
-        if (cidade == "") {
-          exibirToastTop("Não conseguimos identificar sua cidade");
-          return Future.error("Não conseguimos identificar sua cidade");
-        }
-        await atualizarPrecoPorKm(cidade);
-        await setarEnderecoOrigem(double.parse(lat.toString()),
-            double.parse(long.toString()), cidade);
-        return endereco.enderecoOrigem;
-      } catch (e) {
-        return Future.error("Erro ao pegar endereço");
-      }
     } else {
       return Future.error("Erro ao pegar endereço");
     }
@@ -737,6 +1128,7 @@ class MapSampleState extends State<MapSample> {
                             ),
                             onPressed: () async {
                               procurandoMotorista = true;
+                              SingletonCorrida.instance.setCorridaAtiva(true);
                               Navigator.of(context, rootNavigator: true).pop();
                             },
                           ),
@@ -752,20 +1144,34 @@ class MapSampleState extends State<MapSample> {
       if (procurandoMotorista) {
         if (!disponivelNaCidade) {
           exibirToastTop("App indisponível na cidade :(");
+          procurandoMotorista = false;
           return;
         }
-        await inserirCorrida(usuarioLogado, preco, km, endereco,
-                dropdownValueFormaPagamento, controllerTroco.text)
-            .then((value) {
-          exibirToastTop("Estamos procurando um motorista");
-          setState(() {
-            precoCorrida = preco.toString();
-            kmCorrida = km.toString();
-            procurandoMotorista = true;
-            corridaId = value.id;
+        if (controllerTroco.text != "" &&
+            double.parse(controllerTroco.text) < 0 &&
+            dropdownValueFormaPagamento == "Dinheiro") {
+          exibirToastTop("Troco inválido");
+          procurandoMotorista = false;
+          return;
+        }
+        try {
+          await inserirCorrida(usuarioLogado, preco, km, endereco,
+                  dropdownValueFormaPagamento, controllerTroco.text)
+              .then((value) {
+            exibirToastTop("Estamos procurando um motorista");
+            setState(() {
+              precoCorrida = preco.toString();
+              kmCorrida = km.toString();
+              procurandoMotorista = true;
+              corridaId = value.id;
+              SingletonCorrida.instance.setCorridaId(corridaId);
+            });
+            adicionarListenerProcurandoMotorista();
           });
-          adicionarListenerProcurandoMotorista();
-        });
+        } catch (e) {
+          procurandoMotorista = false;
+          exibirToastTop(e.toString());
+        }
       }
     });
   }
@@ -775,47 +1181,69 @@ class MapSampleState extends State<MapSample> {
     FirebaseFirestore.instance
         .collection('Corridas')
         .where('userId', isEqualTo: userId)
-        .where("status", whereIn: ["procurando", "aceito"])
+        .where("status", whereIn: ["procurando", "aceito", "andamento"])
         .snapshots()
         .listen((event) async {
           for (var element in event.docChanges) {
-            var statusCorridaAtual = await buscarStatusCorridaPorId(
-                usuarioLogado.uid, element.doc.id);
+            var corrida = await buscarCorridaPorId(element.doc.id);
+            var statusCorridaAtual = corrida.get("status");
+            var canceladoPeloAdm = false;
+            try {
+              canceladoPeloAdm = corrida.get("cancelamentoAdministrativo");
+            } catch (e) {}
+
             if (statusCorridaAtual == "aceito") {
               setState(() {
-                corridaAtiva = true;
+                corridaAtual = corrida;
+                corridaAceita = true;
+                SingletonCorrida.instance.setCorridaAtiva(true);
+              });
+              buscarTempoQueMotocaChegaEmMinutos();
+            }
+            if (statusCorridaAtual == "cancelado" && corridaAceita) {
+              setState(() {
+                corridaAtual = null;
+                corridaAceita = false;
+                procurandoMotorista = false;
+                SingletonCorrida.instance.setCorridaAtiva(false);
+              });
+              if (canceladoPeloAdm) {
+                await corridaCancelada(corrida.get("motivoCancelamento"));
+              } else {
+                await corridaCancelada("");
+              }
+            }
+            if (statusCorridaAtual == "cancelado" && procurandoMotorista) {
+              setState(() {
+                corridaAtual = null;
+                procurandoMotorista = false;
+                corridaAceita = false;
+                SingletonCorrida.instance.setCorridaAtiva(false);
+              });
+              if (canceladoPeloAdm) {
+                await corridaCancelada(corrida.get("motivoCancelamento"));
+              }
+            }
+            if (statusCorridaAtual == "andamento") {
+              setState(() {
+                corridaAtual = corrida;
+                corridaAceita = false;
+                procurandoMotorista = false;
+                corridaAndamento = true;
+                SingletonCorrida.instance.setCorridaAtiva(true);
               });
             }
-            if (statusCorridaAtual == "cancelado") {
+            if (statusCorridaAtual == "finalizado" && corridaAndamento) {
               setState(() {
-                corridaAtiva = false;
-              });
-              corridaCancelada();
-            }
-            if (statusCorridaAtual == "finalizado") {
-              setState(() {
-                corridaAtiva = false;
+                corridaAtual = null;
+                corridaAndamento = false;
+                SingletonCorrida.instance.setCorridaAtiva(false);
               });
               corridaFinalizada();
             }
           }
         });
   }
-
-  // Future adicionarListenerAceitoMotorista(id) async {
-  //   String userId = usuarioLogado.uid;
-  //   FirebaseFirestore.instance
-  //       .collection('Corridas')
-  //       .where('userId', isEqualTo: userId)
-  //       .where("status", whereIn: ["finalizado", "cancelado"])
-  //       .snapshots()
-  //       .listen((event) {
-  //         for (var element in event.docChanges) {
-  //           var status = element.doc.get("status");
-
-  //         }
-  //       });
-  // }
 
   corridaFinalizada() async {
     await Alert(
@@ -832,26 +1260,26 @@ class MapSampleState extends State<MapSample> {
               color: Colors.white,
             ),
           ),
-          onPressed: () async {
-            cancelarCorridaApp();
+          onPressed: () {
             Navigator.of(context, rootNavigator: true).pop();
+            cancelarCorridaApp();
           },
         )
       ],
     ).show();
   }
 
-  corridaCancelada() async {
+  corridaCancelada(String motivoCancelamento) async {
     await Alert(
       context: context,
-      title: "Corrida cancelada",
-      desc: "Infelizmente foi cancelado sua corrida",
+      title: "Sua corrida foi cancelada",
+      desc: motivoCancelamento,
       style: const AlertStyle(backgroundColor: Colors.white),
       buttons: [
         DialogButton(
           color: Colors.green,
           child: const Text(
-            "Que pena :(",
+            "Ok",
             style: TextStyle(
               color: Colors.white,
             ),
@@ -869,21 +1297,16 @@ class MapSampleState extends State<MapSample> {
     try {
       var position = await pegarLocalizacao();
       await atualizarCameraMapa(position.latitude, position.longitude);
-
-      markers = <MarkerId, Marker>{};
-      adicionarMarker(position.latitude, position.longitude, "Sua localização");
-      var place =
-          await latlongParaEndereco(position.latitude, position.longitude);
-      _controllerEnderecoOrigem.text = place.street.toString() +
-          " " +
-          place.subThoroughfare.toString() +
-          " " +
-          place.subLocality.toString();
-      await setarEnderecoOrigem(position.latitude, position.longitude,
-          place.subAdministrativeArea.toString());
     } catch (e) {
-      exibirToastTop(e.toString());
-      pegarEnderecoOrigem();
+      if (endereco.latLongEnderecoOrigem.latitude != 0 &&
+          endereco.latLongEnderecoOrigem.longitude != 0 &&
+          endereco.enderecoOrigem != "") {
+        await atualizarCameraMapa(endereco.latLongEnderecoOrigem.latitude,
+            endereco.latLongEnderecoOrigem.longitude);
+      } else {
+        exibirToastTop(e.toString());
+        pegarEnderecoOrigem();
+      }
     }
   }
 
@@ -896,66 +1319,66 @@ class MapSampleState extends State<MapSample> {
         lat,
         long,
       ),
-      infoWindow: InfoWindow(title: markerIdVal, snippet: ''),
-      onTap: () {},
+      infoWindow: InfoWindow(title: markerIdVal),
     );
 
     setState(() {
+      if (markerIdVal == "Sua localização") {
+        markers = <MarkerId, Marker>{};
+      }
       markers[markerId] = marker;
     });
   }
 
-  void configuracaoCorrida(context) {
-    showModalBottomSheet(
-        context: context,
-        builder: (BuildContext bc) {
-          return Container(
-            child: Wrap(
-              children: <Widget>[
-                ListTile(
-                    leading: new Icon(Icons.music_note),
-                    title: new Text('Músicas'),
-                    onTap: () => {}),
-                ListTile(
-                  leading: new Icon(Icons.videocam),
-                  title: new Text('Videos'),
-                  onTap: () => {},
-                ),
-                ListTile(
-                  leading: new Icon(Icons.satellite),
-                  title: new Text('Tempo'),
-                  onTap: () => {},
-                ),
-              ],
-            ),
-          );
-        });
+  setarEnderecoOrigem(double latitude, double longitude) async {
+    endereco.latLongEnderecoOrigem = LatLng(latitude, longitude);
+    var enderecoOrigem =
+        await latlongParaEndereco(latitude, longitude, googleApiKey);
+    endereco.cidade = enderecoOrigem.cidade;
+    await atualizarPrecoPorKm(enderecoOrigem.cidade);
+    endereco.enderecoOrigem = enderecoOrigem.enderecoFormatado;
+    setState(() {
+      _controllerEnderecoOrigem.text = enderecoOrigem.enderecoFormatado;
+    });
+    if (endereco.latLongEnderecoDestino.latitude != 0 &&
+        endereco.latLongEnderecoDestino.longitude != 0) {
+      await calcularRota(
+        latitude,
+        longitude,
+        endereco.latLongEnderecoDestino.latitude,
+        endereco.latLongEnderecoDestino.longitude,
+      );
+    }
   }
 
-  setarEnderecoOrigem(double latitude, double longitude, String cidade) async {
-    endereco.latLongEnderecoOrigem = LatLng(latitude, longitude);
-    var place = await latlongParaEndereco(latitude, longitude);
-    endereco.enderecoOrigem = place.street.toString() +
-        ", " +
-        place.subThoroughfare.toString() +
-        " - " +
-        place.subLocality.toString() +
-        ', ' +
-        cidade;
-    endereco.cidade = cidade;
-    await atualizarPrecoPorKm(cidade);
+  setarEnderecoDestino(double latitude, double longitude) async {
+    endereco.latLongEnderecoDestino = LatLng(latitude, longitude);
+    var enderecoDestino =
+        await latlongParaEndereco(latitude, longitude, googleApiKey);
+    await atualizarPrecoPorKm(endereco.cidade);
+    endereco.enderecoDestino = enderecoDestino.enderecoFormatado;
+    endereco.latLongEnderecoDestino = LatLng(latitude, longitude);
+    await calcularRota(endereco.latLongEnderecoOrigem.latitude,
+        endereco.latLongEnderecoOrigem.longitude, latitude, longitude);
+    setState(() {
+      _controllerEnderecoDestino.text = enderecoDestino.enderecoFormatado;
+    });
   }
 
   atualizarCameraMapa(double lat, double long) async {
-    CameraPosition cameraLocalUsuario =
-        CameraPosition(target: LatLng(lat, long), zoom: 15, bearing: 10);
+    if (lat != 0 && long != 0) {
+      CameraPosition cameraLocalUsuario =
+          CameraPosition(target: LatLng(lat, long), zoom: 15, bearing: 10);
 
-    final GoogleMapController controller = await _controller.future;
-    controller
-        .animateCamera(CameraUpdate.newCameraPosition(cameraLocalUsuario));
+      final GoogleMapController controller = await _controller.future;
+      await controller
+          .moveCamera(CameraUpdate.newCameraPosition(cameraLocalUsuario));
+
+      posicaoCameraAtual = LatLng(lat, long);
+    }
   }
 
-  cancelarCorridaApp() {
+  cancelarCorridaApp() async {
     setState(() {
       polylineCoordinates = [];
       polylines = {};
@@ -964,120 +1387,204 @@ class MapSampleState extends State<MapSample> {
       endereco.latLongEnderecoDestino = const LatLng(0, 0);
       rotaFeita = false;
       procurandoMotorista = false;
-      corridaAtiva = false;
-      atualizarCameraMapa(endereco.latLongEnderecoOrigem.latitude,
-          endereco.latLongEnderecoOrigem.longitude);
+      corridaAndamento = false;
+      corridaAceita = false;
+      SingletonCorrida.instance.setCorridaAtiva(false);
+      pegandoEnderecoDestino = false;
       _controllerEnderecoOrigem.text = endereco.enderecoOrigem;
+      _controllerEnderecoDestino.text = "";
+      controllerTroco.text = "";
+      controllerMotivoCancelamento.text = "";
+      endereco.enderecoDestino = "";
+      endereco.latLongEnderecoDestino = const LatLng(0, 0);
+      controllerMotivoCancelamento.text = "";
     });
+    await atualizarLocalUsuario();
   }
 
   Future<void> exibirAlertaCancelarCorrida(context) async {
     await Alert(
       context: context,
-      title: "Deseja realmente cancelar a corrida?",
-      content: TextField(
-        style: const TextStyle(color: Colors.black),
-        autofocus: true,
-        controller: controllerMotivoCancelamento,
-        decoration: const InputDecoration(
-          focusColor: Colors.black,
-          labelText: 'Digite o motivo do cancelamento',
-          labelStyle: TextStyle(fontSize: 20.0, color: Colors.black),
-          fillColor: Colors.black,
-        ),
+      title: !usuarioQuerDigitarMotivoCancelamento
+          ? "Escolha o motivo de cancelamento"
+          : "Digite o motivo do cancelamento",
+      content: Column(
+        children: [
+          !usuarioQuerDigitarMotivoCancelamento
+              ? Column(
+                  children: [
+                    DialogButton(
+                      color: Colors.greenAccent,
+                      child: const Text(
+                        "Tempo de espera",
+                        style: TextStyle(
+                          color: Colors.black,
+                        ),
+                      ),
+                      onPressed: () async {
+                        Navigator.of(context, rootNavigator: true).pop();
+                        controllerMotivoCancelamento.text = "Tempo de espera";
+                        try {
+                          await cancelarCorrida(
+                              controllerMotivoCancelamento.text);
+                          cancelarCorridaApp();
+                        } catch (e) {
+                          exibirToastTop(e.toString());
+                        }
+                      },
+                    ),
+                    DialogButton(
+                      color: Colors.greenAccent,
+                      child: const Text(
+                        "Não desejo mais fazer a corrida",
+                        style: TextStyle(
+                          color: Colors.black,
+                        ),
+                      ),
+                      onPressed: () async {
+                        Navigator.of(context, rootNavigator: true).pop();
+                        controllerMotivoCancelamento.text =
+                            "Não desejo mais fazer a corrida";
+                        try {
+                          await cancelarCorrida(
+                              controllerMotivoCancelamento.text);
+                          cancelarCorridaApp();
+                        } catch (e) {
+                          exibirToastTop(e.toString());
+                        }
+                      },
+                    ),
+                    DialogButton(
+                      color: Colors.greenAccent,
+                      child: const Text(
+                        "Outros",
+                        style: TextStyle(
+                          color: Colors.black,
+                        ),
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          usuarioQuerDigitarMotivoCancelamento = true;
+                        });
+                        Navigator.of(context, rootNavigator: true).pop();
+                        exibirAlertaCancelarCorrida(context);
+                      },
+                    ),
+                  ],
+                )
+              : const SizedBox(),
+          usuarioQuerDigitarMotivoCancelamento
+              ? TextField(
+                  style: const TextStyle(color: Colors.black),
+                  autofocus: true,
+                  controller: controllerMotivoCancelamento,
+                  decoration: const InputDecoration(
+                    focusColor: Colors.black,
+                    labelText: 'Digite o motivo do cancelamento',
+                    labelStyle: TextStyle(fontSize: 20.0, color: Colors.black),
+                    fillColor: Colors.black,
+                  ),
+                )
+              : const SizedBox(),
+        ],
       ),
       style: const AlertStyle(backgroundColor: Colors.white),
-      buttons: [
-        DialogButton(
-          color: Colors.red,
-          child: const Text(
-            "Não",
-            style: TextStyle(
-              color: Colors.white,
-            ),
-          ),
-          onPressed: () {
-            Navigator.of(context, rootNavigator: true).pop();
-          },
-        ),
-        DialogButton(
-          color: Colors.green,
-          child: const Text(
-            "Sim",
-            style: TextStyle(
-              color: Colors.white,
-            ),
-          ),
-          onPressed: () async {
-            if (controllerMotivoCancelamento.text.trim() == "") {
-              exibirToastTop("Digite o motivo do cancelamento");
-              return;
-            }
-            try {
-              await cancelarCorrida(
-                  corridaId, controllerMotivoCancelamento.text);
-
-              exibirToastTop("Corrida cancelada com sucesso");
-
-              controllerMotivoCancelamento.text = "";
-              Navigator.of(context, rootNavigator: true).pop();
-              cancelarCorridaApp();
-            } catch (e) {
-              exibirToastTop("Erro ao cancelar corrida");
-            }
-          },
-        )
-      ],
+      buttons: usuarioQuerDigitarMotivoCancelamento
+          ? [
+              DialogButton(
+                color: Colors.red,
+                child: const Text(
+                  "Sair",
+                  style: TextStyle(
+                    color: Colors.white,
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.of(context, rootNavigator: true).pop();
+                },
+              ),
+              DialogButton(
+                color: Colors.green,
+                child: const Text(
+                  "Confirmar",
+                  style: TextStyle(
+                    color: Colors.white,
+                  ),
+                ),
+                onPressed: () async {
+                  Navigator.of(context, rootNavigator: true).pop();
+                  if (controllerMotivoCancelamento.text.trim() == "") {
+                    exibirToastTop("Digite o motivo do cancelamento");
+                    return;
+                  }
+                  try {
+                    await cancelarCorrida(controllerMotivoCancelamento.text);
+                    cancelarCorridaApp();
+                  } catch (e) {
+                    exibirToastTop(e.toString());
+                  }
+                },
+              )
+            ]
+          : [],
     ).show();
   }
 
-  mostrarInfoMotoca() async {
-    buscarCorridaAtual(usuarioLogado.uid).then((c) async {
-      await Alert(
-        context: context,
-        title: "Informações do motoca",
-        desc: c["motoca"]["nomeCompleto"] +
-            " \n Telefone: " +
-            c["motoca"]["telefone"] +
-            " \n Moto: " +
-            c["motoca"]["moto"] +
-            " \n Placa: " +
-            c["motoca"]["placa"] +
-            " \n \n" +
-            "Seu motoca chega até: \n" +
-            c["tempoDestino"],
-        style: const AlertStyle(backgroundColor: Colors.white),
-        buttons: [
-          DialogButton(
-            color: Colors.red,
-            child: const Text(
-              "Ok",
-              style: TextStyle(
-                color: Colors.white,
-              ),
-            ),
-            onPressed: () {
-              Navigator.of(context, rootNavigator: true).pop();
-            },
-          ),
-        ],
-      ).show();
-    });
-  }
-
   atualizarPrecoPorKm(cidade) async {
+    // var temMotocaDisponivelNaCidade =
+    //     await verificarMotocaDisponivelNaCidade(cidade);
+    var temMotocaDisponivelNaCidade = true;
     await buscarConfiguracaoCidade(cidade).then((value) {
-      precoPorKm = double.parse(value["precoPorKm"].toString());
       setState(() {
-        motocasDisponivel = value["status"];
-        disponivelNaCidade = true;
+        precoPorKm = double.parse(value["precoPorKm"].toString());
+        statusCidade = value["status"];
+        disponivelNaCidade = temMotocaDisponivelNaCidade;
       });
     }).onError((error, stackTrace) {
       setState(() {
-        motocasDisponivel = "";
+        statusCidade = "";
         disponivelNaCidade = false;
       });
-      exibirToastTop("App App indisponível em sua cidade");
+      exibirToastTop("App indisponível em sua cidade");
     });
+  }
+
+  buscarTempoQueMotocaChegaEmMinutos() {
+    if (corridaAceita && corridaAtual != null) {
+      var dataMotocaChega = DateTime.fromMicrosecondsSinceEpoch(
+          corridaAtual["tempoDestino"].millisecondsSinceEpoch * 1000);
+      var dataAtual = DateTime.now();
+
+      if (dataAtual.isAfter(dataMotocaChega)) {
+        setState(() {
+          tempoEmMinutosAteOMotocaChegar = "0";
+        });
+      } else {
+        setState(() {
+          tempoEmMinutosAteOMotocaChegar =
+              (dataMotocaChega.difference(dataAtual).inMinutes + 1).toString();
+        });
+      }
+      Timer(const Duration(seconds: 30),
+          () => buscarTempoQueMotocaChegaEmMinutos());
+    }
+  }
+
+  validarBotaoCancelarCorrida() {
+    // var dataInicioCorrida = DateTime.fromMicrosecondsSinceEpoch(
+    //     corridaAtual["dataInicioCorrida"].millisecondsSinceEpoch * 1000);
+
+    // if (dataInicioCorrida
+    //     .add(Duration(
+    //         minutes: int.parse(tempoMinimoEmMinutosParaCancelarCorrida)))
+    //     .isAfter(DateTime.now())) {
+    //   return true;
+    // }
+
+    if (tempoEmMinutosAteOMotocaChegar == "0") {
+      return true;
+    }
+
+    return false;
   }
 }

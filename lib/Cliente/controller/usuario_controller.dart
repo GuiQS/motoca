@@ -1,8 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-Future<DocumentReference<Object?>> inserirTelefoneUsuario(
-    User usuarioLogado, telefone) async {
+Future<dynamic> inserirTelefoneUsuario(User usuarioLogado, telefone) async {
   CollectionReference corrida =
       FirebaseFirestore.instance.collection('Usuarios');
   var userId = usuarioLogado.uid;
